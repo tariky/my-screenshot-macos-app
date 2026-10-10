@@ -32,6 +32,26 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 + "You can still take screenshots from the menu bar icon."
             alert.runModal()
         }
+
+        openDebugImageIfRequested()
+    }
+
+    /// Development aid: `SCREENSHOT_DEBUG_EDITOR=/path/to.png` opens an editor on that image at
+    /// launch; `SCREENSHOT_DEBUG_THUMBNAIL=/path/to.png` shows it as the post-capture thumbnail.
+    private func openDebugImageIfRequested() {
+        let env = ProcessInfo.processInfo.environment
+        func load(_ path: String) -> CGImage? {
+            guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else { return nil }
+            return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        }
+        if let path = env["SCREENSHOT_DEBUG_EDITOR"], let image = load(path) {
+            openEditor(image: image)
+        }
+        if let path = env["SCREENSHOT_DEBUG_THUMBNAIL"], let image = load(path) {
+            thumbnail.show(image: image, onOpen: { [weak self] in
+                self?.openEditor(image: image)
+            }, onExpire: {})
+        }
     }
 
     // MARK: - Menus

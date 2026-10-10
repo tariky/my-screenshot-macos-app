@@ -8,12 +8,17 @@ final class CanvasView: NSView {
         didSet { needsDisplay = true }
     }
     var onArrowAdded: ((Arrow) -> Void)?
+    /// Called with `true` when an arrow drag starts moving and `false` when it ends.
+    var onDragStateChanged: ((Bool) -> Void)?
 
     private let image: CGImage
     private let pixelSize: CGSize
     /// In-progress drag, in view coordinates.
     private var dragStart: CGPoint?
     private var dragEnd: CGPoint?
+    private var isDragging = false {
+        didSet { if isDragging != oldValue { onDragStateChanged?(isDragging) } }
+    }
 
     init(image: CGImage) {
         self.image = image
@@ -42,7 +47,7 @@ final class CanvasView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.underPageBackgroundColor.setFill()
+        EditorWindow.backdropColor.setFill()
         dirtyRect.fill()
 
         guard let context = NSGraphicsContext.current?.cgContext,
@@ -83,6 +88,7 @@ final class CanvasView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard dragStart != nil else { return }
         dragEnd = clampedPoint(for: event)
+        isDragging = true
         needsDisplay = true
     }
 
@@ -91,6 +97,7 @@ final class CanvasView: NSView {
         let end = clampedPoint(for: event)
         dragStart = nil
         dragEnd = nil
+        isDragging = false
         needsDisplay = true
         guard !ArrowRules.isTooShort(from: start, to: end) else { return }
         let fit = self.fit
