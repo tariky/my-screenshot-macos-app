@@ -112,6 +112,12 @@ public enum ArrowRenderer {
     /// Returns a new image with the same pixel size as `base`, with `arrows` drawn on top.
     /// Arrow points are top-left-origin image pixels (see `Arrow`).
     public static func render(base: CGImage, arrows: [Arrow]) -> CGImage {
+        render(base: base, annotations: arrows.map(Annotation.arrow))
+    }
+
+    /// Like render(base:arrows:) but for mixed annotations, drawn in order.
+    /// Same pixel size, same colour space handling, byte-identical with [] .
+    public static func render(base: CGImage, annotations: [Annotation]) -> CGImage {
         let w = base.width, h = base.height
         guard w > 0, h > 0,
               let space = outputColorSpace(for: base),
@@ -124,15 +130,18 @@ public enum ArrowRenderer {
         ctx.interpolationQuality = .none
         ctx.draw(base, in: rect)
 
-        if !arrows.isEmpty {
+        if !annotations.isEmpty {
             ctx.interpolationQuality = .high
             ctx.setShouldAntialias(true)
-            // Flip so top-left-origin arrow points land where intended.
+            // Flip so top-left-origin points land where intended.
             ctx.translateBy(x: 0, y: CGFloat(h))
             ctx.scaleBy(x: 1, y: -1)
             let lw = lineWidth(for: CGSize(width: w, height: h))
-            for arrow in arrows {
-                draw(arrow, lineWidth: lw, in: ctx)
+            for annotation in annotations {
+                switch annotation {
+                case .arrow(let arrow): draw(arrow, lineWidth: lw, in: ctx)
+                case .text(let label): draw(label, in: ctx)
+                }
             }
         }
 

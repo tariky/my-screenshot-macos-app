@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreText
 import Foundation
 import ImageIO
 import ScreenshotCore
@@ -86,7 +87,20 @@ if let i = CommandLine.arguments.firstIndex(of: "--sample"), i + 1 < CommandLine
         Arrow(start: CGPoint(x: 2100, y: 250), end: CGPoint(x: 2160, y: 300)),
         Arrow(start: CGPoint(x: 900, y: 1450), end: CGPoint(x: 1050, y: 1450)),
     ]
-    let png = ArrowRenderer.pngData(ArrowRenderer.render(base: base, arrows: arrows))
+    let fs = ArrowRenderer.fontSize(for: CGSize(width: w, height: h))
+    let labels = [
+        TextLabel(origin: CGPoint(x: 120, y: 330), text: "Click here", fontSize: fs),
+        TextLabel(origin: CGPoint(x: 120, y: 900), text: "Two lines:\nwhite / dark", fontSize: fs),
+        TextLabel(origin: CGPoint(x: 720, y: 330), text: "On dark", fontSize: fs),
+        TextLabel(origin: CGPoint(x: 1050, y: 1100), text: "Multi-line\nlabel, gypq", fontSize: fs),
+        TextLabel(origin: CGPoint(x: 1400, y: 180), text: "Salmon ✓", fontSize: fs),
+        TextLabel(origin: CGPoint(x: 2060, y: 380), text: "Blue 123", fontSize: fs),
+        TextLabel(origin: CGPoint(x: 2060, y: 900), text: "Big", fontSize: fs * 2),
+        TextLabel(origin: CGPoint(x: 1600, y: 1450), text: "small 18px", fontSize: 18),
+        TextLabel(origin: CGPoint(x: 2100, y: 1430), text: "Nice 👍", fontSize: fs),
+    ]
+    let annotations = arrows.map(Annotation.arrow) + labels.map(Annotation.text)
+    let png = ArrowRenderer.pngData(ArrowRenderer.render(base: base, annotations: annotations))
     try! png.write(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
     exit(0)
 }
@@ -265,6 +279,176 @@ do {
     let zero = drawArrows(width: 60, height: 60, fill: (0, 0, 0), lineWidth: 20,
                           [Arrow(start: CGPoint(x: 30, y: 30), end: CGPoint(x: 30, y: 30))])
     check(empty == zero, "shape: zero-length arrow draws nothing")
+}
+
+// MARK: - Text labels
+
+check(approx(ArrowRenderer.fontSize(for: CGSize(width: 200, height: 100)), 24), "fontSize: small image → 2 × 12 = 24")
+check(approx(ArrowRenderer.fontSize(for: CGSize(width: 2700, height: 2200)), 44.1), "fontSize: 2700×2200 → 2 × 22.05",
+      "\(ArrowRenderer.fontSize(for: CGSize(width: 2700, height: 2200)))")
+check(approx(ArrowRenderer.fontSize(for: CGSize(width: 20000, height: 20000)), 96), "fontSize: huge image → 2 × 48 = 96")
+
+do {
+    let f = ArrowRenderer.labelFont(size: 37)
+    check(approx(CTFontGetSize(f), 37), "labelFont: requested size", "\(CTFontGetSize(f))")
+    check(CTFontGetSymbolicTraits(f).contains(.traitBold), "labelFont: bold")
+}
+
+do {
+    let l = TextLabel(origin: CGPoint(x: 3, y: 4), text: "Hi", fontSize: 20)
+    check(l.origin == CGPoint(x: 3, y: 4) && l.text == "Hi" && l.fontSize == 20, "TextLabel: init stores fields")
+    check(Annotation.text(l) == .text(l) && Annotation.text(l) != .arrow(Arrow(start: .zero, end: .zero)), "Annotation: Equatable")
+}
+
+do {
+    let fs: CGFloat = 40
+    let font = ArrowRenderer.labelFont(size: fs)
+    let lineH = CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)
+    func size(_ t: String) -> CGSize { ArrowRenderer.textSize(TextLabel(origin: .zero, text: t, fontSize: fs)) }
+    let one = size("Hello"), longer = size("Hello, world"), two = size("Hello\nworld"), empty = size("")
+    check(longer.width > one.width && approx(longer.height, one.height), "textSize: grows with text length", "\(one) \(longer)")
+    check(two.height > 1.7 * one.height && two.height <= 2 * one.height + 0.001, "textSize: two lines ≈ 2× one line", "\(one) \(two)")
+    check(one.height > lineH, "textSize: height includes outline margin", "h=\(one.height) line=\(lineH)")
+    let attr = CFAttributedStringCreate(nil, "Hello" as CFString,
+                                        [kCTFontAttributeName: font] as CFDictionary)!
+    let raw = CGFloat(CTLineGetTypographicBounds(CTLineCreateWithAttributedString(attr), nil, nil, nil))
+    check(one.width > raw, "textSize: width includes outline margin", "w=\(one.width) raw=\(raw)")
+    check(empty.width < fs * 0.5, "textSize: empty text has (near) zero width", "\(empty)")
+    let wide = size("ab\nabcdefgh\nabc")
+    check(approx(wide.width, size("abcdefgh").width, 0.001), "textSize: width = widest line", "\(wide) vs \(size("abcdefgh"))")
+    check(size("x").width == ArrowRenderer.textSize(TextLabel(origin: CGPoint(x: 500, y: 9), text: "x", fontSize: fs)).width,
+          "textSize: independent of origin")
+}
+
+/// Draws `labels` with `draw(_:in:)` into a flipped (top-left origin) context over `fill`; RGBA bytes, row 0 = top.
+func drawLabels(width: Int, height: Int, fill: (CGFloat, CGFloat, CGFloat), _ labels: [TextLabel]) -> [UInt8] {
+    let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                        space: srgb, bitmapInfo: rgbaInfo)!
+    ctx.setFillColor(CGColor(srgbRed: fill.0, green: fill.1, blue: fill.2, alpha: 1))
+    ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    ctx.translateBy(x: 0, y: CGFloat(height))
+    ctx.scaleBy(x: 1, y: -1)
+    for l in labels { ArrowRenderer.draw(l, in: ctx) }
+    let ptr = ctx.data!.assumingMemoryBound(to: UInt8.self)
+    return Array(UnsafeBufferPointer(start: ptr, count: width * height * 4))
+}
+
+do {
+    // Black base: red fill + white outline inside origin+textSize; nothing outside it.
+    let w = 400, h = 300
+    let label = TextLabel(origin: CGPoint(x: 30, y: 12), text: "Text", fontSize: 60)
+    let sz = ArrowRenderer.textSize(label)
+    let px = drawLabels(width: w, height: h, fill: (0, 0, 0), [label])
+    let box = CGRect(origin: label.origin, size: sz).insetBy(dx: -2, dy: -2)
+    var red = 0, white = 0, outside = 0, firstOutside = ""
+    for y in 0..<h { for x in 0..<w {
+        let p = pixel(px, width: w, x: x, y: y)
+        let inBox = box.contains(CGPoint(x: CGFloat(x) + 0.5, y: CGFloat(y) + 0.5))
+        if isRedish(p) && inBox { red += 1 }
+        if isWhiteish(p) && inBox { white += 1 }
+        if !inBox && !isDark(p) { outside += 1; if firstOutside.isEmpty { firstOutside = "(\(x),\(y)) \(p)" } }
+    } }
+    check(red > 300, "text: red glyph pixels inside the box", "red=\(red)")
+    check(white > 100, "text: white outline pixels", "white=\(white)")
+    check(outside == 0, "text: nothing drawn outside origin+textSize", "outside=\(outside) first=\(firstOutside) size=\(sz)")
+    // Top-left convention: small origin.y → ink near the TOP rows only.
+    let inkRows = (0..<h).filter { y in (0..<w).contains { !isDark(pixel(px, width: w, x: $0, y: y)) } }
+    check((inkRows.min() ?? 999) < 30 && (inkRows.max() ?? 999) < h / 2, "text: top-left origin — drawn at the top",
+          "rows \(inkRows.min() ?? -1)…\(inkRows.max() ?? -1)")
+    // Left edge sits at origin.x + small margin.
+    let inkCols = (0..<w).filter { x in (0..<h).contains { !isDark(pixel(px, width: w, x: x, y: $0)) } }
+    check((inkCols.min() ?? 0) >= 28 && (inkCols.min() ?? 999) <= 40, "text: left edge near origin.x", "col \(inkCols.min() ?? -1)")
+}
+
+do {
+    // Not upside-down: in a "T" the bar (row with most red) is in the upper part of the glyph.
+    let w = 200, h = 200
+    let px = drawLabels(width: w, height: h, fill: (0, 0, 0), [TextLabel(origin: CGPoint(x: 20, y: 20), text: "T", fontSize: 120)])
+    let counts = (0..<h).map { y in (0..<w).filter { isRedish(pixel(px, width: w, x: $0, y: y)) }.count }
+    let rows = counts.indices.filter { counts[$0] > 0 }
+    let top = rows.first ?? 0, bottom = rows.last ?? 0
+    let bar = counts.indices.max { counts[$0] < counts[$1] } ?? 0
+    check(bottom - top > 50, "text T: glyph has height", "\(top)…\(bottom)")
+    check(bar < top + (bottom - top) / 3, "text T: bar at the top (not upside-down)", "bar=\(bar) glyph \(top)…\(bottom)")
+}
+
+do {
+    // On a white base the outline merges with the base, the fill is red; shadow stays near the text.
+    let w = 400, h = 200
+    let label = TextLabel(origin: CGPoint(x: 20, y: 20), text: "Shadow", fontSize: 50)
+    let sz = ArrowRenderer.textSize(label)
+    let px = drawLabels(width: w, height: h, fill: (1, 1, 1), [label])
+    let blur = 0.35 * label.fontSize
+    let allowed = CGRect(x: label.origin.x - blur, y: label.origin.y - blur,
+                         width: sz.width + 2 * blur, height: sz.height + 2.5 * blur)
+    var far = 0, shadowed = 0
+    for y in 0..<h { for x in 0..<w {
+        let p = pixel(px, width: w, x: x, y: y)
+        if !allowed.contains(CGPoint(x: x, y: y)) && !isWhite(p) { far += 1 }
+        if p.r < 250 && !isRedish(p) { shadowed += 1 }
+    } }
+    check(far == 0, "text: shadow stays within ~1 blur of the box", "far=\(far)")
+    check(shadowed > 50, "text: soft shadow visible on white", "shadowed=\(shadowed)")
+}
+
+do {
+    // Multi-line: second line below the first.
+    let w = 300, h = 300, fs: CGFloat = 50
+    let one = drawLabels(width: w, height: h, fill: (0, 0, 0), [TextLabel(origin: CGPoint(x: 10, y: 10), text: "AB", fontSize: fs)])
+    let two = drawLabels(width: w, height: h, fill: (0, 0, 0), [TextLabel(origin: CGPoint(x: 10, y: 10), text: "AB\nCD", fontSize: fs)])
+    func lastRedRow(_ px: [UInt8]) -> Int { (0..<h).last { y in (0..<w).contains { isRedish(pixel(px, width: w, x: $0, y: y)) } } ?? 0 }
+    let lineH = ArrowRenderer.textSize(TextLabel(origin: .zero, text: "AB\nCD", fontSize: fs)).height
+        - ArrowRenderer.textSize(TextLabel(origin: .zero, text: "AB", fontSize: fs)).height
+    let d = CGFloat(lastRedRow(two) - lastRedRow(one))
+    check(abs(d - lineH) <= 3, "text: second line one line-height lower", "Δ=\(d) lineH=\(lineH)")
+}
+
+do {
+    let blank = drawLabels(width: 120, height: 80, fill: (0, 0, 0), [])
+    let ws = drawLabels(width: 120, height: 80, fill: (0, 0, 0), [
+        TextLabel(origin: CGPoint(x: 10, y: 10), text: "", fontSize: 30),
+        TextLabel(origin: CGPoint(x: 10, y: 10), text: "   ", fontSize: 30),
+        TextLabel(origin: CGPoint(x: 10, y: 10), text: " \n\t\n ", fontSize: 30),
+        TextLabel(origin: CGPoint(x: 10, y: 10), text: "X", fontSize: 0),
+        TextLabel(origin: CGPoint(x: 10, y: 10), text: "X", fontSize: .nan),
+    ])
+    check(blank == ws, "text: empty / whitespace-only / zero-size draws nothing")
+}
+
+do {
+    // render(base:annotations:)
+    let w = 37, h = 23
+    let base = makeImage(width: w, height: h) { x, y in
+        (UInt8((x * 7 + y * 3) % 256), UInt8((x * 13) % 256), UInt8((y * 29) % 256), 255)
+    }
+    let out = ArrowRenderer.render(base: base, annotations: [])
+    check(out.width == w && out.height == h, "annotations: [] keeps size")
+    check(rawRGBA(base) != nil && rawRGBA(base) == rawRGBA(out), "annotations: [] → byte-identical pixels")
+}
+
+do {
+    let w = 500, h = 300
+    let black = makeImage(width: w, height: h) { _, _ in (0, 0, 0, 255) }
+    let arrow = Arrow(start: CGPoint(x: 300, y: 250), end: CGPoint(x: 480, y: 250))
+    let label = TextLabel(origin: CGPoint(x: 20, y: 10), text: "Hi", fontSize: 60)
+    let out = ArrowRenderer.render(base: black, annotations: [.arrow(arrow), .text(label)])
+    check(out.width == w && out.height == h, "annotations: mixed keeps size")
+    if let px = rawRGBA(out) {
+        check(isRedish(pixel(px, width: w, x: 390, y: 250)), "annotations: arrow drawn", "\(pixel(px, width: w, x: 390, y: 250))")
+        let sz = ArrowRenderer.textSize(label)
+        var red = 0
+        for y in 0..<Int(sz.height + 10) { for x in 20..<Int(20 + sz.width) where isRedish(pixel(px, width: w, x: x, y: y)) { red += 1 } }
+        check(red > 200, "annotations: text drawn at the top-left (flipped bitmap)", "red=\(red)")
+        let bottomLeft = (h / 2..<h).allSatisfy { y in (0..<250).allSatisfy { isDark(pixel(px, width: w, x: $0, y: y)) } }
+        check(bottomLeft, "annotations: text not mirrored to the bottom")
+    } else {
+        check(false, "annotations: readable output bytes")
+    }
+
+    let arrows = [arrow, Arrow(start: CGPoint(x: 50, y: 280), end: CGPoint(x: 200, y: 150))]
+    let viaArrows = rawRGBA(ArrowRenderer.render(base: black, arrows: arrows))
+    let viaAnn = rawRGBA(ArrowRenderer.render(base: black, annotations: arrows.map(Annotation.arrow)))
+    check(viaArrows != nil && viaArrows == viaAnn, "annotations: render(arrows:) == render(annotations:) byte-for-byte")
 }
 
 // MARK: - pngData
