@@ -8,23 +8,23 @@ public enum ArrowRenderer {
 
     // Skitch-style geometry, as multiples of the neck width (the `lineWidth` argument).
     /// Tip → barb corners, along the arrow.
-    private static let headLengthFactor: CGFloat = 3.0
+    private static let headLengthFactor: CGFloat = 2.6
     /// Full width across the barb corners.
-    private static let headWidthFactor: CGFloat = 3.2
+    private static let headWidthFactor: CGFloat = 2.8
     /// Where the shaft joins the head, as a fraction of head length back from the tip.
     /// Less than 1 so the head's back edge notches in toward the tip (swept-back barbs).
     private static let neckFraction: CGFloat = 0.8
     /// Shaft width at the (rounded) tail.
-    private static let tailWidthFactor: CGFloat = 0.35
+    private static let tailWidthFactor: CGFloat = 0.55
     /// The head never takes more than this fraction of the arrow's length.
     private static let maxHeadFraction: CGFloat = 0.6
 
     /// Shaft width at the neck (right behind the head), in image pixels:
-    /// clamp(0.35% of (width + height), 10, 40) — ≈17 px on a typical Retina capture.
+    /// clamp(0.45% of (width + height), 12, 48) — ≈22 px on a typical Retina capture.
     public static func lineWidth(for imageSize: CGSize) -> CGFloat {
         let sum = imageSize.width + imageSize.height
-        guard sum.isFinite else { return 10 }
-        return min(40, max(10, 0.0035 * sum))
+        guard sum.isFinite else { return 12 }
+        return min(48, max(12, 0.0045 * sum))
     }
 
     /// Draws one Skitch-style arrow into `context`: a single filled shape — a shaft tapering from

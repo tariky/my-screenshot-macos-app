@@ -93,11 +93,11 @@ if let i = CommandLine.arguments.firstIndex(of: "--sample"), i + 1 < CommandLine
 
 // MARK: - lineWidth
 
-check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 200, height: 100)), 10), "lineWidth: small image → 10 (floor)")
-check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 2000, height: 1000)), 10.5), "lineWidth: 2000×1000 → 10.5")
-check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 2700, height: 2200)), 17.15), "lineWidth: 2700×2200 → 17.15")
-check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 20000, height: 20000)), 40), "lineWidth: 20000×20000 → 40 (cap)")
-check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 0, height: 0)), 10), "lineWidth: zero size → 10")
+check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 200, height: 100)), 12), "lineWidth: small image → 12 (floor)")
+check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 2000, height: 1000)), 13.5), "lineWidth: 2000×1000 → 13.5")
+check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 2700, height: 2200)), 22.05), "lineWidth: 2700×2200 → 22.05")
+check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 20000, height: 20000)), 48), "lineWidth: 20000×20000 → 48 (cap)")
+check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 0, height: 0)), 12), "lineWidth: zero size → 12")
 
 // MARK: - render
 
@@ -190,8 +190,8 @@ func isWhiteish(_ p: (r: Int, g: Int, b: Int, a: Int)) -> Bool { p.r > 200 && p.
 func isDark(_ p: (r: Int, g: Int, b: Int, a: Int)) -> Bool { p.r < 40 && p.g < 40 && p.b < 40 }
 
 do {
-    // Horizontal arrow, neck width 20 → head length 60 (barbs at x=480), neck at x=492,
-    // head width 64, tail width 7 at x=60.
+    // Horizontal arrow, neck width 20 → head length 52 (barbs at x=488), neck at x≈498,
+    // head width 56, tail width 11 at x=60.
     let w = 600, h = 300, lw: CGFloat = 20
     let arrow = Arrow(start: CGPoint(x: 60, y: 150), end: CGPoint(x: 540, y: 150))
     let px = drawArrows(width: w, height: h, fill: (0, 0, 0), lineWidth: lw, [arrow])
@@ -211,12 +211,12 @@ do {
     let tailSpan = redSpan(px, width: w, height: h, x: 80)
     check(neckSpan >= 17 && neckSpan <= 22, "shape: shaft ≈ lineWidth near neck", "neck=\(neckSpan)")
     check(headSpan > 2 * neckSpan, "shape: head much wider than neck", "head=\(headSpan) neck=\(neckSpan)")
-    check(tailSpan > 0 && tailSpan < neckSpan / 2, "shape: tail tapers (narrower than neck)", "tail=\(tailSpan) neck=\(neckSpan)")
+    check(tailSpan > 0 && tailSpan < neckSpan * 3 / 4, "shape: tail tapers (narrower than neck)", "tail=\(tailSpan) neck=\(neckSpan)")
 
     // Swept-back barbs: behind the neck, the barb tips are red but the notch between barb and
     // shaft is not.
-    let barb = pixel(px, width: w, x: 483, y: 150 - 27)
-    let notch = pixel(px, width: w, x: 483, y: 150 - 16)
+    let barb = pixel(px, width: w, x: 491, y: 150 - 25)
+    let notch = pixel(px, width: w, x: 491, y: 150 - 16)
     check(isRedish(barb), "shape: barb extends behind the neck", "\(barb)")
     check(!isRedish(notch), "shape: concave notch between barb and shaft", "\(notch)")
 
@@ -224,7 +224,7 @@ do {
     let beyond = (0..<h).map { pixel(px, width: w, x: 546, y: $0) }
     check(beyond.allSatisfy(isDark), "shape: nothing drawn beyond the tip", "\(beyond.first { !isDark($0) }.map { "\($0)" } ?? "")")
     // Nothing behind the rounded tail either.
-    check((0..<h).allSatisfy { isDark(pixel(px, width: w, x: 52, y: $0)) }, "shape: nothing drawn behind the tail")
+    check((0..<h).allSatisfy { isDark(pixel(px, width: w, x: 48, y: $0)) }, "shape: nothing drawn behind the tail")
 }
 
 do {
