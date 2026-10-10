@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Builds Screenshot.app (release) in the repo root and ad-hoc signs it.
+# Builds Screenshot.app (release) in the repo root and signs it.
+# Usage: ./build-app.sh [--install]   (--install copies it to /Applications and relaunches it)
 set -euo pipefail
+
+INSTALL=false
+[[ "${1:-}" == "--install" ]] && INSTALL=true
 
 cd "$(dirname "$0")"
 
@@ -53,5 +57,21 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-codesign --force --deep --sign - "$APP"
+# A stable identity keeps the Screen Recording grant across rebuilds; ad-hoc signatures
+# change with every build, so macOS treats each build as a new app.
+SIGN_ID="${SIGN_ID:-Screenshot Local Signing}"
+if security find-identity -p codesigning | grep -q "\"$SIGN_ID\""; then
+    codesign --force --deep --sign "$SIGN_ID" "$APP"
+else
+    echo "warning: no \"$SIGN_ID\" identity (run scripts/make-signing-cert.sh); signing ad-hoc" >&2
+    codesign --force --deep --sign - "$APP"
+fi
 echo "Built $(pwd)/$APP"
+
+if $INSTALL; then
+    pkill -f "/Applications/$APP/Contents/MacOS/" || true
+    rm -rf "/Applications/$APP"
+    ditto "$APP" "/Applications/$APP"
+    open "/Applications/$APP"
+    echo "Installed /Applications/$APP"
+fi
