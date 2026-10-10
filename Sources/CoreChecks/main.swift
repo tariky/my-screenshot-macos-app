@@ -72,11 +72,32 @@ func pixel(_ bytes: [UInt8], width: Int, x: Int, y: Int) -> (r: Int, g: Int, b: 
 func isRedish(_ p: (r: Int, g: Int, b: Int, a: Int)) -> Bool { p.r > 200 && p.g < 100 && p.b < 100 }
 func isWhite(_ p: (r: Int, g: Int, b: Int, a: Int)) -> Bool { p.r == 255 && p.g == 255 && p.b == 255 && p.a == 255 }
 
+// MARK: - Visual sample (`CoreChecks --sample out.png`): Retina-sized striped base + a few arrows.
+
+if let i = CommandLine.arguments.firstIndex(of: "--sample"), i + 1 < CommandLine.arguments.count {
+    let w = 2700, h = 1700
+    let stripes: [(UInt8, UInt8, UInt8)] = [(255, 255, 255), (48, 48, 52), (230, 120, 100), (40, 90, 200)]
+    let base = makeImage(width: w, height: h) { x, _ in let c = stripes[x * stripes.count / w]; return (c.0, c.1, c.2, 255) }
+    let arrows = [
+        Arrow(start: CGPoint(x: 150, y: 250), end: CGPoint(x: 1250, y: 250)),
+        Arrow(start: CGPoint(x: 2550, y: 1550), end: CGPoint(x: 1500, y: 700)),
+        Arrow(start: CGPoint(x: 400, y: 1500), end: CGPoint(x: 900, y: 650)),
+        Arrow(start: CGPoint(x: 1450, y: 400), end: CGPoint(x: 1450, y: 1300)),
+        Arrow(start: CGPoint(x: 2100, y: 250), end: CGPoint(x: 2160, y: 300)),
+        Arrow(start: CGPoint(x: 900, y: 1450), end: CGPoint(x: 1050, y: 1450)),
+    ]
+    let png = ArrowRenderer.pngData(ArrowRenderer.render(base: base, arrows: arrows))
+    try! png.write(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
+    exit(0)
+}
+
 // MARK: - lineWidth
 
-check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 100, height: 80)), 3), "lineWidth: small image → 3")
-check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 2000, height: 1000)), 5), "lineWidth: 2000×1000 → 5")
-check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 0, height: 0)), 3), "lineWidth: zero size → 3")
+check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 200, height: 100)), 10), "lineWidth: small image → 10 (floor)")
+check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 2000, height: 1000)), 10.5), "lineWidth: 2000×1000 → 10.5")
+check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 2700, height: 2200)), 17.15), "lineWidth: 2700×2200 → 17.15")
+check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 20000, height: 20000)), 40), "lineWidth: 20000×20000 → 40 (cap)")
+check(approx(ArrowRenderer.lineWidth(for: CGSize(width: 0, height: 0)), 10), "lineWidth: zero size → 10")
 
 // MARK: - render
 
@@ -108,11 +129,10 @@ do {
         // Pixel just before the tip, inside the head, should be red (sharp filled head).
         let nearTip = pixel(px, width: w, x: 176, y: 50)
         check(isRedish(nearTip), "render: head is filled near tip", "\(nearTip)")
-        // Head is wider than the shaft: a point off-axis inside the head base is red.
+        // Head is wider than the shaft: a point off-axis just behind the tip is red.
         let lw = ArrowRenderer.lineWidth(for: CGSize(width: w, height: h))
-        let headBaseX = Int(180 - 4.5 * lw + 2)
-        let headSide = pixel(px, width: w, x: headBaseX, y: 50 + Int(lw * 1.2))
-        check(isRedish(headSide), "render: head wider than shaft", "\(headSide) at x=\(headBaseX)")
+        let headSide = pixel(px, width: w, x: 160, y: 50 + Int(lw * 0.8))
+        check(isRedish(headSide), "render: head wider than shaft", "\(headSide) lw=\(lw)")
         // Beyond the tip stays (essentially) untouched.
         let beyond = pixel(px, width: w, x: 190, y: 50)
         check(beyond.r > 200 && beyond.g > 200 && beyond.b > 200, "render: beyond tip not red", "\(beyond)")
@@ -144,6 +164,107 @@ do {
         Arrow(start: CGPoint(x: 30, y: 30), end: CGPoint(x: 30, y: 30)),
     ])
     check(out.width == 50 && out.height == 50, "render: short/degenerate arrows don't crash")
+}
+
+// MARK: - Arrow shape (draw into a flipped, top-left-origin context like the canvas does)
+
+/// Draws `arrows` with `draw(_:lineWidth:in:)` over a solid `fill`; returns RGBA bytes, row 0 = top.
+func drawArrows(width: Int, height: Int, fill: (CGFloat, CGFloat, CGFloat), lineWidth: CGFloat, _ arrows: [Arrow]) -> [UInt8] {
+    let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                        space: srgb, bitmapInfo: rgbaInfo)!
+    ctx.setFillColor(CGColor(srgbRed: fill.0, green: fill.1, blue: fill.2, alpha: 1))
+    ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    ctx.translateBy(x: 0, y: CGFloat(height))
+    ctx.scaleBy(x: 1, y: -1)
+    for a in arrows { ArrowRenderer.draw(a, lineWidth: lineWidth, in: ctx) }
+    let ptr = ctx.data!.assumingMemoryBound(to: UInt8.self)
+    return Array(UnsafeBufferPointer(start: ptr, count: width * height * 4))
+}
+
+/// Number of red pixels in column `x`.
+func redSpan(_ px: [UInt8], width: Int, height: Int, x: Int) -> Int {
+    (0..<height).filter { isRedish(pixel(px, width: width, x: x, y: $0)) }.count
+}
+
+func isWhiteish(_ p: (r: Int, g: Int, b: Int, a: Int)) -> Bool { p.r > 200 && p.g > 200 && p.b > 200 }
+func isDark(_ p: (r: Int, g: Int, b: Int, a: Int)) -> Bool { p.r < 40 && p.g < 40 && p.b < 40 }
+
+do {
+    // Horizontal arrow, neck width 20 → head length 60 (barbs at x=480), neck at x=492,
+    // head width 64, tail width 7 at x=60.
+    let w = 600, h = 300, lw: CGFloat = 20
+    let arrow = Arrow(start: CGPoint(x: 60, y: 150), end: CGPoint(x: 540, y: 150))
+    let px = drawArrows(width: w, height: h, fill: (0, 0, 0), lineWidth: lw, [arrow])
+
+    let mid = pixel(px, width: w, x: 300, y: 150)
+    check(isRedish(mid), "shape: shaft midpoint is red", "\(mid)")
+    check(isRedish(pixel(px, width: w, x: 532, y: 150)), "shape: head filled near tip", "\(pixel(px, width: w, x: 532, y: 150))")
+
+    // Shaft half-width at x=470 ≈ 9.7; outline ≈ 2.8 beyond that.
+    let above = pixel(px, width: w, x: 470, y: 150 - 12), below = pixel(px, width: w, x: 470, y: 150 + 11)
+    check(isWhiteish(above) && isWhiteish(below), "shape: white outline just outside shaft near neck", "above=\(above) below=\(below)")
+    let outside = pixel(px, width: w, x: 470, y: 150 - 20)
+    check(isDark(outside), "shape: well outside shaft is untouched base", "\(outside)")
+
+    let neckSpan = redSpan(px, width: w, height: h, x: 470)
+    let headSpan = redSpan(px, width: w, height: h, x: 500)
+    let tailSpan = redSpan(px, width: w, height: h, x: 80)
+    check(neckSpan >= 17 && neckSpan <= 22, "shape: shaft ≈ lineWidth near neck", "neck=\(neckSpan)")
+    check(headSpan > 2 * neckSpan, "shape: head much wider than neck", "head=\(headSpan) neck=\(neckSpan)")
+    check(tailSpan > 0 && tailSpan < neckSpan / 2, "shape: tail tapers (narrower than neck)", "tail=\(tailSpan) neck=\(neckSpan)")
+
+    // Swept-back barbs: behind the neck, the barb tips are red but the notch between barb and
+    // shaft is not.
+    let barb = pixel(px, width: w, x: 483, y: 150 - 27)
+    let notch = pixel(px, width: w, x: 483, y: 150 - 16)
+    check(isRedish(barb), "shape: barb extends behind the neck", "\(barb)")
+    check(!isRedish(notch), "shape: concave notch between barb and shaft", "\(notch)")
+
+    // Nothing past the tip beyond the outline (shadow is invisible on black).
+    let beyond = (0..<h).map { pixel(px, width: w, x: 546, y: $0) }
+    check(beyond.allSatisfy(isDark), "shape: nothing drawn beyond the tip", "\(beyond.first { !isDark($0) }.map { "\($0)" } ?? "")")
+    // Nothing behind the rounded tail either.
+    check((0..<h).allSatisfy { isDark(pixel(px, width: w, x: 52, y: $0)) }, "shape: nothing drawn behind the tail")
+}
+
+do {
+    // On a blue base the outline must read white, distinct from the base.
+    let w = 600, h = 300
+    let px = drawArrows(width: w, height: h, fill: (0, 0.3, 1), lineWidth: 20,
+                        [Arrow(start: CGPoint(x: 60, y: 150), end: CGPoint(x: 540, y: 150))])
+    let edge = pixel(px, width: w, x: 470, y: 150 - 12)
+    check(isWhiteish(edge), "shape: outline white on blue base", "\(edge)")
+}
+
+do {
+    // Diagonal arrow: shaft midpoint red, a point well off-axis untouched.
+    let w = 400, h = 400
+    let px = drawArrows(width: w, height: h, fill: (0, 0, 0), lineWidth: 16,
+                        [Arrow(start: CGPoint(x: 350, y: 350), end: CGPoint(x: 50, y: 50))])
+    check(isRedish(pixel(px, width: w, x: 200, y: 200)), "shape: diagonal shaft midpoint red", "\(pixel(px, width: w, x: 200, y: 200))")
+    check(isRedish(pixel(px, width: w, x: 60, y: 60)), "shape: diagonal head near tip red", "\(pixel(px, width: w, x: 60, y: 60))")
+    check(isDark(pixel(px, width: w, x: 300, y: 100)), "shape: diagonal off-axis untouched")
+    check(isDark(pixel(px, width: w, x: 40, y: 40)), "shape: diagonal beyond tip untouched", "\(pixel(px, width: w, x: 40, y: 40))")
+}
+
+do {
+    // Short arrow (length 40 < 1.6 × head length 60): head shrinks to ≤ 60% of the length.
+    let w = 200, h = 200
+    let px = drawArrows(width: w, height: h, fill: (0, 0, 0), lineWidth: 20,
+                        [Arrow(start: CGPoint(x: 80, y: 100), end: CGPoint(x: 120, y: 100))])
+    check(isRedish(pixel(px, width: w, x: 115, y: 100)), "short: head near tip red")
+    check(isRedish(pixel(px, width: w, x: 86, y: 100)), "short: shaft still visible near tail")
+    let tallest = (0..<w).map { redSpan(px, width: w, height: h, x: $0) }.max() ?? 0
+    check(tallest > 15 && tallest <= 28, "short: head scaled down (width ≤ 0.6 × 40 × 3.2/3)", "tallest=\(tallest)")
+    check((0..<h).allSatisfy { isDark(pixel(px, width: w, x: 126, y: $0)) }, "short: nothing beyond the tip")
+}
+
+do {
+    // Zero-length arrow draws nothing at all.
+    let empty = drawArrows(width: 60, height: 60, fill: (0, 0, 0), lineWidth: 20, [])
+    let zero = drawArrows(width: 60, height: 60, fill: (0, 0, 0), lineWidth: 20,
+                          [Arrow(start: CGPoint(x: 30, y: 30), end: CGPoint(x: 30, y: 30))])
+    check(empty == zero, "shape: zero-length arrow draws nothing")
 }
 
 // MARK: - pngData
