@@ -13,7 +13,7 @@ final class EditorWindow: NSWindow, NSWindowDelegate {
 
     private let baseImage: CGImage
     private let createdAt = Date()
-    private var arrows: [Arrow] = []
+    private var annotations: [Annotation] = []
     private let canvas: CanvasView
     private let hud = EditorHUD()
 
@@ -83,9 +83,24 @@ final class EditorWindow: NSWindow, NSWindowDelegate {
         hud.doneButton.target = self
         hud.doneButton.action = #selector(done(_:))
 
+        hud.arrowToolButton.target = self
+        hud.arrowToolButton.action = #selector(selectArrowTool(_:))
+        hud.textToolButton.target = self
+        hud.textToolButton.action = #selector(selectTextTool(_:))
+        updateToolButtons()
+
         canvas.onArrowAdded = { [weak self] arrow in
-            self?.arrows.append(arrow)
-            self?.arrowsChanged()
+            self?.annotations.append(.arrow(arrow))
+            self?.annotationsChanged()
+        }
+        canvas.onTextEdited = { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .added(let label): annotations.append(.text(label))
+            case .replaced(let index, let label): annotations[index] = .text(label)
+            case .removed(let index): annotations.remove(at: index)
+            }
+            annotationsChanged()
         }
         canvas.onDragStateChanged = { [weak self] dragging in
             self?.hud.setDimmed(dragging)
@@ -110,29 +125,58 @@ final class EditorWindow: NSWindow, NSWindowDelegate {
     // MARK: - State
 
     private var renderedImage: CGImage {
-        arrows.isEmpty ? baseImage : ArrowRenderer.render(base: baseImage, arrows: arrows)
+        annotations.isEmpty ? baseImage : ArrowRenderer.render(base: baseImage, annotations: annotations)
     }
 
-    private func arrowsChanged() {
-        canvas.arrows = arrows
+    private func annotationsChanged() {
+        canvas.annotations = annotations
         updateUndoButton()
         Clipboard.write(renderedImage)
     }
 
     private func updateUndoButton() {
-        hud.undoButton.isEnabled = !arrows.isEmpty
+        hud.undoButton.isEnabled = !annotations.isEmpty
+    }
+
+    private func updateToolButtons() {
+        hud.arrowToolButton.isOn = canvas.tool == .arrow
+        hud.textToolButton.isOn = canvas.tool == .text
+    }
+
+    private func setTool(_ tool: EditorTool) {
+        canvas.commitEditing()
+        canvas.tool = tool
+        updateToolButtons()
+        if firstResponder !== canvas { makeFirstResponder(canvas) }
+    }
+
+    /// The canvas's text field editor has focus: keys belong to it.
+    private var isEditingText: Bool {
+        canvas.isEditingText
     }
 
     // MARK: - Actions
 
+    @objc func selectArrowTool(_ sender: Any?) {
+        setTool(.arrow)
+    }
+
+    @objc func selectTextTool(_ sender: Any?) {
+        setTool(.text)
+    }
+
+    /// Removes the last annotation (arrow or text). An open text edit is committed first,
+    /// so the HUD Undo button undoes what the user sees.
     @objc func undoArrow(_ sender: Any?) {
-        guard !arrows.isEmpty else { return }
-        arrows.removeLast()
-        arrowsChanged()
+        canvas.commitEditing()
+        guard !annotations.isEmpty else { return }
+        annotations.removeLast()
+        annotationsChanged()
     }
 
     @objc func saveImage(_ sender: Any?) {
         guard attachedSheet == nil else { return }
+        canvas.commitEditing()
         let image = renderedImage
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
@@ -155,6 +199,12 @@ final class EditorWindow: NSWindow, NSWindowDelegate {
         close()
     }
 
+    /// Commits any open text edit before the window goes away (also for programmatic close()).
+    override func close() {
+        canvas.commitEditing()
+        super.close()
+    }
+
     private static func defaultFileName(for date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -171,7 +221,15 @@ final class EditorWindow: NSWindow, NSWindowDelegate {
             return super.performKeyEquivalent(with: event)
         }
         let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
-        if mods == .command, let key = event.charactersIgnoringModifiers?.lowercased() {
+        let key = event.charactersIgnoringModifiers?.lowercased()
+        if isEditingText {
+            // The text view gets ⌘Z/⌘A/⌘C/… and Esc (cancel edit) via the normal path.
+            // Save and close still work, committing the edit first (see saveImage / close).
+            if mods == .command, key == "s" { saveImage(nil); return true }
+            if mods == .command, key == "w" { close(); return true }
+            return super.performKeyEquivalent(with: event)
+        }
+        if mods == .command, let key {
             switch key {
             case "z": undoArrow(nil); return true
             case "s": saveImage(nil); return true
@@ -187,15 +245,28 @@ final class EditorWindow: NSWindow, NSWindowDelegate {
     }
 
     override func cancelOperation(_ sender: Any?) {
-        close()
+        if isEditingText {
+            canvas.cancelEditing()
+        } else {
+            close()
+        }
     }
 
+    /// Unhandled keys from the canvas: Esc closes, A / T switch tools.
     override func keyDown(with event: NSEvent) {
+        let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
         if event.keyCode == UInt16(kVK_Escape) {
-            close()
-        } else {
-            super.keyDown(with: event)
+            if isEditingText { canvas.cancelEditing() } else { close() }
+            return
         }
+        if !isEditingText, mods.isEmpty {
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "a": setTool(.arrow); return
+            case "t": setTool(.text); return
+            default: break
+            }
+        }
+        super.keyDown(with: event)
     }
 
     // MARK: - NSWindowDelegate
@@ -209,18 +280,20 @@ final class EditorWindow: NSWindow, NSWindowDelegate {
 
 // MARK: - HUD
 
-/// Floating pill with Undo / Save | Done, overlaid on the canvas.
+/// Floating pill with Arrow / Text | Undo / Save | Done, overlaid on the canvas.
 /// To add controls, put them in `items` (an `HUDSeparator` gets a little extra breathing room).
 final class EditorHUD: NSView {
     static let height: CGFloat = 40
 
+    let arrowToolButton = HUDButton.icon("arrow.up.right", toolTip: "Arrow (A)", label: "Arrow")
+    let textToolButton = HUDButton.icon("textformat", toolTip: "Text (T)", label: "Text")
     let undoButton = HUDButton.icon("arrow.uturn.backward", toolTip: "Undo (⌘Z)", label: "Undo")
     let saveButton = HUDButton.icon("square.and.arrow.down", toolTip: "Save… (⌘S)", label: "Save")
     let doneButton = HUDButton(symbol: "checkmark", title: "Done", style: .prominent,
                                toolTip: "Done (Esc)", accessibilityLabel: "Done")
 
     private var items: [NSView] {
-        [undoButton, saveButton, HUDSeparator(), doneButton]
+        [arrowToolButton, textToolButton, HUDSeparator(), undoButton, saveButton, HUDSeparator(), doneButton]
     }
 
     private let effect = NSVisualEffectView()
