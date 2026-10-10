@@ -86,7 +86,7 @@ public enum ArrowRenderer {
     public static func render(base: CGImage, arrows: [Arrow]) -> CGImage {
         let w = base.width, h = base.height
         guard w > 0, h > 0,
-              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let space = outputColorSpace(for: base),
               let ctx = CGContext(
                 data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                 space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
@@ -109,6 +109,15 @@ public enum ArrowRenderer {
         }
 
         return ctx.makeImage() ?? base
+    }
+
+    /// Keep the screenshot's own RGB space (usually Display P3) so wide-gamut colours survive;
+    /// fall back to sRGB for anything a bitmap context can't use as-is.
+    private static func outputColorSpace(for image: CGImage) -> CGColorSpace? {
+        if let space = image.colorSpace, space.model == .rgb, space.supportsOutput {
+            return space
+        }
+        return CGColorSpace(name: CGColorSpace.sRGB)
     }
 
     /// PNG encoding of `image`.
