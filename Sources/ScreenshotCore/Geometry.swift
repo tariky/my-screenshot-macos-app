@@ -14,14 +14,36 @@ public struct ImageFit: Equatable {
     }
 
     /// View points per image pixel (aspect-fit, may be < 1 or > 1).
-    public var scale: CGFloat { fatalError("TODO") }
+    public var scale: CGFloat {
+        guard isValid else { return 1 }
+        return min(viewSize.width / imageSize.width, viewSize.height / imageSize.height)
+    }
 
     /// Where the image is drawn in view coordinates (centered).
-    public var imageRect: CGRect { fatalError("TODO") }
+    /// Degenerate sizes (zero, negative, non-finite) yield `.zero` with scale 1, so the
+    /// mappings degrade to identity instead of producing NaN.
+    public var imageRect: CGRect {
+        guard isValid else { return .zero }
+        let s = scale
+        let w = imageSize.width * s, h = imageSize.height * s
+        return CGRect(x: (viewSize.width - w) / 2, y: (viewSize.height - h) / 2, width: w, height: h)
+    }
 
-    public func toImage(_ viewPoint: CGPoint) -> CGPoint { fatalError("TODO") }
+    /// Not clamped: points outside the image map to coordinates outside 0..<size.
+    public func toImage(_ viewPoint: CGPoint) -> CGPoint {
+        let o = imageRect.origin, s = scale
+        return CGPoint(x: (viewPoint.x - o.x) / s, y: (viewPoint.y - o.y) / s)
+    }
 
-    public func toView(_ imagePoint: CGPoint) -> CGPoint { fatalError("TODO") }
+    public func toView(_ imagePoint: CGPoint) -> CGPoint {
+        let o = imageRect.origin, s = scale
+        return CGPoint(x: imagePoint.x * s + o.x, y: imagePoint.y * s + o.y)
+    }
+
+    private var isValid: Bool {
+        func ok(_ v: CGFloat) -> Bool { v.isFinite && v > 0 }
+        return ok(imageSize.width) && ok(imageSize.height) && ok(viewSize.width) && ok(viewSize.height)
+    }
 }
 
 public enum ArrowRules {
@@ -29,6 +51,7 @@ public enum ArrowRules {
     public static let minimumDragLength: CGFloat = 5
 
     public static func isTooShort(from start: CGPoint, to end: CGPoint) -> Bool {
-        fatalError("TODO")
+        let dx = end.x - start.x, dy = end.y - start.y
+        return (dx * dx + dy * dy).squareRoot() < minimumDragLength
     }
 }
